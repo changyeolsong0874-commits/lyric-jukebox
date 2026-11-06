@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: lyric-jukebox
+    runtime: node
+    plan: free
+    buildCommand: echo "no build step"
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: MUSIXMATCH_KEY
+        sync: false   # Render 대시보드에서 직접 입력 (없으면 샘플 곡으로 동작)
