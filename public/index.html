@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>가사 주크박스</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1b1f; --mut:#6b6b76; --card:#f3f3f7; --acc:#5b4bff; --line:#e1e1e8; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141418; --fg:#ececf1; --mut:#9a9aa8; --card:#1f1f26; --line:#2c2c36; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,"Malgun Gothic",sans-serif; }
+  main { max-width:720px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:8px 0 16px; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+  input { flex:1; min-width:0; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); font:inherit; }
+  button { padding:10px 14px; border:0; border-radius:8px; background:var(--acc); color:#fff; font:inherit; cursor:pointer; }
+  button.ghost { background:var(--card); color:var(--fg); border:1px solid var(--line); }
+  .row { display:flex; gap:12px; align-items:center; padding:8px; border-radius:10px; }
+  .row img { width:48px; height:48px; border-radius:6px; object-fit:cover; background:var(--line); }
+  .row .t { flex:1; min-width:0; }
+  .row .t b, .row .t span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row .t span { color:var(--mut); font-size:14px; }
+  .row.cur { background:var(--card); outline:2px solid var(--acc); }
+  h2 { font-size:15px; color:var(--mut); margin:20px 0 6px; }
+  .player { position:sticky; bottom:0; background:var(--bg); border-top:1px solid var(--line); padding:12px 0; margin-top:16px; }
+  .ctl { display:flex; gap:8px; justify-content:center; margin-top:8px; }
+  input[type=range] { width:100%; padding:0; }
+  #join { text-align:center; padding:40px 0; }
+  .hide { display:none; }
+  small { color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎵 가사 주크박스</h1>
+
+  <div id="join">
+    <p>같은 방 코드를 입력하면 함께 같은 재생목록을 듣습니다.</p>
+    <div class="bar" style="max-width:360px;margin:0 auto">
+      <input id="room" placeholder="방 코드 (예: party)" maxlength="32">
+      <button id="enter">입장</button>
+    </div>
+    <p><button class="ghost" id="newRoom">🎲 새 방 만들기 (랜덤 코드)</button></p>
+  </div>
+
+  <div id="app" class="hide">
+    <div class="bar">
+      <small id="roomInfo"></small>
+      <button class="ghost" id="copy" style="margin-left:auto">링크 복사</button>
+    </div>
+    <form id="sf" class="bar">
+      <input id="q" placeholder="기억나는 가사 일부를 입력하세요" autocomplete="off">
+      <button>검색</button>
+    </form>
+    <div id="results"></div>
+
+    <h2>재생목록</h2>
+    <div id="list"></div>
+
+    <div class="player">
+      <div class="row" id="now"><small>재생 중인 곡이 없습니다</small></div>
+      <input type="range" id="seek" min="0" max="30000" value="0">
+      <div class="ctl">
+        <button class="ghost" id="prev">⏮</button>
+        <button id="pp">▶</button>
+        <button class="ghost" id="next">⏭</button>
+      </div>
+      <small>※ 30초 미리듣기 길이로 재생됩니다.</small>
+    </div>
+  </div>
+</main>
+<audio id="audio"></audio>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let room, state = null, offset = 0, seeking = false;
+const audio = $('audio');
+
+const roomFromUrl = new URLSearchParams(location.search).get('room');
+if (roomFromUrl) $('room').value = roomFromUrl;
+
+// 추측하기 어려운 랜덤 방 코드 (헷갈리는 문자 제외, 10자)
+$('newRoom').onclick = () => {
+  const cs = 'abcdefghjkmnpqrstuvwxyz23456789', b = crypto.getRandomValues(new Uint8Array(10));
+  $('room').value = Array.from(b, x => cs[x % cs.length]).join('');
+  $('enter').click();
+};
+
+$('enter').onclick = () => {
+  room = $('room').value.trim().replace(/[^\w-]/g, '') || 'lobby';
+  history.replaceState(null, '', '?room=' + room);
+  $('join').classList.add('hide'); $('app').classList.remove('hide');
+  // 클릭 이후이므로 브라우저 자동재생 제한 해제
+  audio.play().catch(() => {});
+  const es = new EventSource(`/api/room/${room}/events`);
+  es.onmessage = e => apply(JSON.parse(e.data));
+  // SSE가 프록시/터널에서 막혀도 동작하도록 2초마다 상태를 확인
+  setInterval(() => fetch(`/api/room/${room}/state`).then(r => r.json()).then(apply).catch(() => {}), 2000);
+};
+function apply(s) { state = s; offset = s.serverNow - Date.now(); render(); }
+$('room').addEventListener('keydown', e => e.key === 'Enter' && $('enter').click());
+
+const send = a => fetch(`/api/room/${room}/act`, { method: 'POST', body: JSON.stringify(a) })
+  .then(r => r.json()).then(apply).catch(() => {}); // 응답 상태를 바로 반영
+$('copy').onclick = () => navigator.clipboard.writeText(location.href);
+
+$('sf').onsubmit = async e => {
+  e.preventDefault();
+  const q = $('q').value.trim(); if (!q) return;
+  $('results').innerHTML = '<small>검색 중...</small>';
+  const list = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json();
+  $('results').innerHTML = list.length ? '<h2>검색 결과</h2>' : '<small>일치하는 곡을 찾지 못했습니다.</small>';
+  list.forEach(t => {
+    const d = document.createElement('div'); d.className = 'row';
+    d.innerHTML = `<img src="${esc(t.cover)}" alt=""><div class="t"><b>${esc(t.title)}</b><span>${esc(t.artist)}</span></div><button>+ 담기</button>`;
+    d.querySelector('button').onclick = () => { send({ type: 'add', track: t }); d.remove(); };
+    $('results').appendChild(d);
+  });
+};
+
+let loadedId = null;
+function render() {
+  const s = state, cur = s.playlist[s.index];
+  $('roomInfo').textContent = `방: ${room} · 접속 ${s.users}명`;
+  $('list').innerHTML = s.playlist.length ? '' : '<small>가사로 곡을 검색해 담아보세요.</small>';
+  s.playlist.forEach((t, i) => {
+    const d = document.createElement('div'); d.className = 'row' + (i === s.index ? ' cur' : '');
+    d.innerHTML = `<img src="${esc(t.cover)}" alt=""><div class="t"><b>${esc(t.title)}</b><span>${esc(t.artist)}</span></div><button class="ghost">✕</button>`;
+    d.onclick = () => send({ type: 'select', index: i });
+    d.querySelector('button').onclick = e => { e.stopPropagation(); send({ type: 'remove', id: t.id }); };
+    $('list').appendChild(d);
+  });
+  $('now').innerHTML = cur ? `<img src="${esc(cur.cover)}" alt=""><div class="t"><b>${esc(cur.title)}</b><span>${esc(cur.artist)}</span></div>` : '<small>재생 중인 곡이 없습니다</small>';
+  $('pp').textContent = s.playing ? '⏸' : '▶';
+
+  if (!cur) { audio.pause(); loadedId = null; return; }
+  if (loadedId !== cur.id) { audio.src = cur.previewUrl; loadedId = cur.id; }
+  const target = (s.pos) / 1000; // 서버가 serverNow 시점 기준으로 계산한 위치
+  if (Math.abs(audio.currentTime - target) > 0.7) {
+    try { audio.currentTime = target; } catch { audio.addEventListener('loadedmetadata', () => audio.currentTime = target, { once: true }); }
+  }
+  if (s.playing) audio.play().catch(() => {}); else audio.pause();
+}
+
+audio.onended = () => { const c = state && state.playlist[state.index]; if (c) send({ type: 'ended', id: c.id }); };
+audio.ontimeupdate = () => { if (!seeking) $('seek').value = audio.currentTime * 1000; };
+$('seek').oninput = () => seeking = true;
+$('seek').onchange = e => { seeking = false; send({ type: 'seek', pos: +e.target.value }); };
+$('pp').onclick = () => send({ type: state.playing ? 'pause' : 'play' });
+$('next').onclick = () => send({ type: 'next' });
+$('prev').onclick = () => send({ type: 'prev' });
+
+if (roomFromUrl) $('room').focus();
+</script>
+</body>
+</html>
