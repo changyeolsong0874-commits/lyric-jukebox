@@ -240,7 +240,7 @@ const RECENT_KEY = 'jukebox.recent';
 function getRecent() { try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch { return []; } }
 function setRecent(list) { try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8))); } catch {} }
 const remember = code => setRecent([code, ...getRecent().filter(c => c !== code)]);
-const forget = code => { setRecent(getRecent().filter(c => c !== code)); renderRecent(); };
+const forget = code => { setRecent(getRecent().filter(c => c !== code)); try { localStorage.removeItem('jukebox.queue.' + code); } catch {} renderRecent(); };
 
 let lobbyTimer = null;
 function renderRecent(delay = 0) {
@@ -320,7 +320,28 @@ $('newRoom').onclick = () => {
 };
 $('enter').onclick = () => enterRoom($('room').value);
 $('leave').onclick = () => showLobby();
-function apply(s) { state = s; offset = s.serverNow - Date.now(); render(); }
+// ---------- 대기열 백업 ----------
+// 방 상태는 서버 메모리에만 있어서 서버가 재시작(무료 서버 절전·배포)되면 대기열이 사라집니다.
+// 그래서 마지막으로 본 대기열을 이 브라우저에 저장해 두고, 서버가 바뀌었는데(boot 값이 다름) 방이 비어 있으면 되살립니다.
+// 같은 서버에서 사람이 직접 곡을 다 지운 경우(boot 값이 같음)는 되살리지 않습니다.
+const QUEUE_KEY = code => 'jukebox.queue.' + code;
+function loadQueue(code) { try { return JSON.parse(localStorage.getItem(QUEUE_KEY(code))); } catch { return null; } }
+function saveQueue(code, s) { try { localStorage.setItem(QUEUE_KEY(code), JSON.stringify({ boot: s.boot, playlist: s.playlist, index: s.index })); } catch {} }
+let restoring = null; // 복원 요청을 한 번만 보내기 위한 표시 (방 코드)
+
+function apply(s) {
+  state = s; offset = s.serverNow - Date.now();
+  if (room && s.boot) {
+    const saved = loadQueue(room);
+    if (!s.playlist.length && saved && saved.boot !== s.boot && saved.playlist && saved.playlist.length) {
+      if (restoring !== room) { restoring = room; send({ type: 'restore', playlist: saved.playlist, index: saved.index }); }
+    } else {
+      saveQueue(room, s);
+      if (restoring === room && s.playlist.length) restoring = null;
+    }
+  }
+  render();
+}
 $('room').addEventListener('keydown', e => e.key === 'Enter' && $('enter').click());
 
 const send = a => {

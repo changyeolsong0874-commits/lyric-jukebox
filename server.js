@@ -6,6 +6,9 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const MM_KEY = process.env.MUSIXMATCH_KEY || '';
+// 서버가 켜질 때마다 바뀌는 ID. 방 상태는 메모리에만 있어 재시작 시 사라지므로,
+// 클라이언트가 이 값이 바뀐 걸 보고 자기 브라우저에 저장해 둔 대기열을 되살립니다('restore').
+const BOOT_ID = crypto.randomUUID();
 
 // ---------- 가사 검색 ----------
 const MOCK = [
@@ -107,7 +110,7 @@ setInterval(() => {
 function snapshot(r) {
   const users = userCount(r);
   r.lastUsers = users;
-  return { playlist: r.playlist, index: r.index, playing: r.playing, pos: curPos(r), serverNow: Date.now(), users };
+  return { boot: BOOT_ID, playlist: r.playlist, index: r.index, playing: r.playing, pos: curPos(r), serverNow: Date.now(), users };
 }
 function broadcast(r) {
   const data = `data: ${JSON.stringify(snapshot(r))}\n\n`;
@@ -121,6 +124,17 @@ function select(r, i) {
 
 function act(r, a) {
   switch (a.type) {
+    case 'restore': { // 서버 재시작으로 비어 버린 방에만, 클라이언트가 저장해 둔 대기열을 복원 (일시정지 상태로)
+      if (r.playlist.length || !Array.isArray(a.playlist)) break;
+      const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+      r.playlist = a.playlist.slice(0, 200)
+        .filter(t => t && typeof t.previewUrl === 'string' && /^https:\/\//.test(t.previewUrl))
+        .map(t => ({ id: str(t.id, 64) || crypto.randomUUID(), title: str(t.title, 200), artist: str(t.artist, 200),
+          previewUrl: str(t.previewUrl, 1000), cover: /^https:\/\//.test(t.cover || '') ? str(t.cover, 1000) : '' }));
+      r.index = r.playlist.length ? Math.min(Math.max(0, +a.index || 0), r.playlist.length - 1) : -1;
+      setPos(r, 0, false);
+      break;
+    }
     case 'add':
       r.playlist.push(a.track);
       if (r.index === -1) select(r, 0);
@@ -148,7 +162,7 @@ function act(r, a) {
 }
 
 // ---------- HTTP ----------
-const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
 
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
