@@ -107,6 +107,10 @@
   .row button.x { padding:6px 10px; background:transparent; border:0; color:var(--mut); font-size:16px; }
   .row button.x:hover { color:var(--a); background:var(--card); }
   @keyframes in { from { opacity:0; transform:translateY(6px); } }
+  /* YouTube 플레이어 (도입부 재생 중일 때만 보임) */
+  .video { margin:4px 0 6px; border-radius:18px; overflow:hidden; background:#000; border:1px solid var(--line);
+    aspect-ratio:16/9; min-height:200px; max-width:560px; box-shadow:0 12px 40px #0005; }
+  .video iframe, .video #yt { width:100%; height:100%; display:block; border:0; }
   .empty { text-align:center; padding:30px 10px; border:1px dashed var(--line); border-radius:18px; color:var(--mut); }
 
   /* 이퀄라이저 */
@@ -202,6 +206,8 @@
     </section>
     <div id="results"></div>
 
+    <section class="video hide" id="videoBox" aria-label="지금 재생 중인 영상"><div id="yt"></div></section>
+
     <h3>대기열 <em id="cnt">0</em></h3>
     <div id="list"></div>
   </div>
@@ -216,7 +222,7 @@
       <button id="pp" aria-label="재생/일시정지">▶</button>
       <button class="ghost" id="next" aria-label="다음">⏭</button>
     </div>
-    <div class="note">30초 미리듣기로 재생돼요</div>
+    <div class="note" id="note">곡마다 도입부 30초를 재생해요</div>
   </div>
 </div>
 <audio id="audio"></audio>
@@ -294,8 +300,8 @@ function leaveRoom() {
   if (!room) return;
   navigator.sendBeacon(`/api/room/${room}/leave?cid=${cid}`); // 바로 인원에서 빠지도록
   if (es) es.close(); clearInterval(poll); es = poll = null;
-  gen++; room = null; state = null; loadedId = null;
-  audio.pause(); audio.removeAttribute('src'); audio.load();
+  gen++; room = null; state = null;
+  stopMedia(); audio.removeAttribute('src'); audio.load();
   document.body.classList.remove('playing');
 }
 
@@ -391,7 +397,7 @@ function render() {
     const d = document.createElement('div'); d.className = 'row' + (on ? ' cur' : '');
     const num = on ? `<span class="eq ${s.playing ? '' : 'paused'}"><i></i><i></i><i></i></span>` : (i + 1);
     d.innerHTML = `<div class="n">${num}</div><img src="${esc(t.cover)}" alt=""><div class="t"><b>${esc(t.title)}</b><span>${esc(t.artist)}</span></div><button class="x" aria-label="삭제">✕</button>`;
-    d.onclick = () => send({ type: 'select', index: i });
+    d.onclick = () => { primeMedia(); send({ type: 'select', index: i }); };
     d.querySelector('button').onclick = e => { e.stopPropagation(); send({ type: 'remove', id: t.id }); };
     $('list').appendChild(d);
   });
@@ -400,23 +406,106 @@ function render() {
     : `<div class="disc"></div><div class="t"><b>재생 중인 곡이 없어요</b><span>곡을 담으면 바로 시작돼요</span></div>`;
   $('pp').textContent = s.playing ? '⏸' : '▶';
 
-  if (!cur) { audio.pause(); loadedId = null; return; }
-  if (loadedId !== cur.id) { audio.src = cur.previewUrl; loadedId = cur.id; }
-  const target = (s.pos) / 1000; // 서버가 serverNow 시점 기준으로 계산한 위치
-  if (Math.abs(audio.currentTime - target) > 0.7) {
-    try { audio.currentTime = target; } catch { audio.addEventListener('loadedmetadata', () => audio.currentTime = target, { once: true }); }
+  syncMedia(cur, s);
+}
+
+// ---------- 재생: YouTube 도입부 30초 (없으면 iTunes 미리듣기) ----------
+// 서버가 곡을 담을 때 YouTube 영상(videoId)을 찾아 둡니다. 영상이 있으면 0:00~0:30을 재생하고,
+// 영상이 없거나 재생할 수 없으면 기존 iTunes 30초 미리듣기(하이라이트)로 대체합니다.
+// 재생 위치는 모두 "곡 시작부터 몇 ms"라서 방 안의 모든 사람이 같은 지점을 듣습니다.
+const CLIP = 30;
+let yt = null, ytReady = false, ytLoadedId = null, mode = null, endedSent = null;
+const ytFailed = new Set(); // 퍼가기 금지 등으로 YouTube 재생이 안 된 곡 → iTunes로 대체
+
+(function loadYouTube() {
+  window.onYouTubeIframeAPIReady = () => {
+    yt = new YT.Player('yt', {
+      width: '100%', height: '100%',
+      playerVars: { playsinline: 1, controls: 0, disablekb: 1, rel: 0, fs: 0, iv_load_policy: 3, modestbranding: 1 },
+      events: {
+        onReady: () => { ytReady = true; if (state) render(); },
+        onStateChange: e => { if (e.data === YT.PlayerState.ENDED && ytOnCurrent()) clipEnded(); },
+        onError: () => { if (ytLoadedId) ytFailed.add(ytLoadedId); ytLoadedId = null; if (state) render(); },
+      },
+    });
+  };
+  const sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(sc);
+})();
+
+// 플레이어에 실제로 올라와 있는 영상이 지금 곡의 영상인지 (곡이 바뀐 직후엔 이전 영상 정보가 남아 있을 수 있음)
+function ytOnCurrent() {
+  const c = state && state.playlist[state.index];
+  try { return !!(c && yt && yt.getVideoData && yt.getVideoData().video_id === c.videoId); } catch { return false; }
+}
+const mediaTime = () => mode === 'yt' ? (yt && yt.getCurrentTime ? yt.getCurrentTime() || 0 : 0) : audio.currentTime;
+
+function syncMedia(cur, s) {
+  if (!cur) { stopMedia(); return; }
+  if (endedSent && endedSent !== cur.id) endedSent = null;
+  const useYT = !!(cur.videoId && ytReady && !ytFailed.has(cur.id));
+  const target = Math.min(s.pos / 1000, CLIP); // 서버가 serverNow 시점 기준으로 계산한 위치
+  $('videoBox').classList.toggle('hide', !useYT);
+  $('note').textContent = useYT ? '곡마다 도입부 30초를 재생해요' : (cur.videoId && !ytReady ? '플레이어를 불러오는 중…' : '이 곡은 30초 미리듣기로 재생돼요');
+
+  if (useYT) {
+    if (mode !== 'yt') { audio.pause(); mode = 'yt'; }
+    if (ytLoadedId !== cur.id) {
+      ytLoadedId = cur.id;
+      const opts = { videoId: cur.videoId, startSeconds: target, endSeconds: CLIP };
+      s.playing ? yt.loadVideoById(opts) : yt.cueVideoById(opts);
+      return;
+    }
+    if (Math.abs(mediaTime() - target) > 1.2) yt.seekTo(target, true); // YouTube는 탐색 비용이 커서 오차 허용을 조금 넓게
+    const st = yt.getPlayerState();
+    if (s.playing && st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.BUFFERING) yt.playVideo();
+    if (!s.playing && st === YT.PlayerState.PLAYING) yt.pauseVideo();
+  } else {
+    if (mode === 'yt' && yt && yt.pauseVideo) yt.pauseVideo();
+    mode = 'audio'; ytLoadedId = null;
+    if (!cur.previewUrl) { audio.pause(); return; }
+    if (loadedId !== cur.id) { audio.src = cur.previewUrl; loadedId = cur.id; }
+    if (Math.abs(audio.currentTime - target) > 0.7) {
+      try { audio.currentTime = target; } catch { audio.addEventListener('loadedmetadata', () => audio.currentTime = target, { once: true }); }
+    }
+    if (s.playing) audio.play().catch(() => {}); else audio.pause();
   }
-  if (s.playing) audio.play().catch(() => {}); else audio.pause();
+}
+
+function stopMedia() {
+  audio.pause(); loadedId = null;
+  if (yt && yt.stopVideo) yt.stopVideo();
+  ytLoadedId = null; mode = null; endedSent = null;
+  $('videoBox').classList.add('hide');
+}
+
+// 30초(또는 곡 끝)에 도달하면 다음 곡으로. 여러 사람이 동시에 보내도 서버가 한 번만 처리함
+function clipEnded() {
+  const c = state && state.playlist[state.index];
+  if (!c || !room || endedSent === c.id) return;
+  endedSent = c.id;
+  if (mode === 'yt' && yt && yt.pauseVideo) yt.pauseVideo();
+  send({ type: 'ended', id: c.id });
+}
+
+// 모바일은 "사용자가 누른 순간"에만 소리 재생을 허락하므로, 재생 관련 버튼을 누를 때 바로 플레이어를 깨움
+function primeMedia() {
+  if (mode === 'yt' && yt && yt.playVideo) yt.playVideo(); else audio.play().catch(() => {});
 }
 
 function paintSeek() { const v = +$('seek').value; $('seek').style.setProperty('--p', (v / 300) + '%'); $('tcur').textContent = fmt(v / 1000); }
-audio.onended = () => { const c = state && state.playlist[state.index]; if (c && room) send({ type: 'ended', id: c.id }); };
-audio.ontimeupdate = () => { if (!seeking) { $('seek').value = audio.currentTime * 1000; paintSeek(); } };
+setInterval(() => { // 진행바 갱신 + 30초 도달 감시
+  if (!state || !room || !mode) return;
+  if (mode === 'yt' && !ytOnCurrent()) return; // 새 영상이 아직 안 올라옴
+  const t = Math.min(mediaTime(), CLIP);
+  if (!seeking) { $('seek').value = t * 1000; paintSeek(); }
+  if (state.playing && mode === 'yt' && t >= CLIP - 0.25 && yt.getPlayerState() === YT.PlayerState.PLAYING) clipEnded();
+}, 250);
+audio.onended = clipEnded;
 $('seek').oninput = () => { seeking = true; paintSeek(); };
 $('seek').onchange = e => { seeking = false; send({ type: 'seek', pos: +e.target.value }); };
-$('pp').onclick = () => state && send({ type: state.playing ? 'pause' : 'play' });
-$('next').onclick = () => send({ type: 'next' });
-$('prev').onclick = () => send({ type: 'prev' });
+$('pp').onclick = () => { if (!state) return; if (!state.playing) primeMedia(); send({ type: state.playing ? 'pause' : 'play' }); };
+$('next').onclick = () => { primeMedia(); send({ type: 'next' }); };
+$('prev').onclick = () => { primeMedia(); send({ type: 'prev' }); };
 
 // 처음 열었을 때: 대기실 + 최근 방 표시. 초대 링크(?room=)로 왔으면 코드가 미리 채워져 있음
 renderRecent();

@@ -10,6 +10,38 @@ const MM_KEY = process.env.MUSIXMATCH_KEY || '';
 // 클라이언트가 이 값이 바뀐 걸 보고 자기 브라우저에 저장해 둔 대기열을 되살립니다('restore').
 const BOOT_ID = crypto.randomUUID();
 
+// ---------- 곡 도입부 재생용 YouTube 영상 찾기 ----------
+// iTunes 미리듣기는 Apple이 고른 하이라이트 30초라서, 곡을 대기열에 담을 때 YouTube에서 같은 곡을 찾아
+// 클라이언트가 0:00~0:30(도입부)을 재생하게 합니다. 키가 없거나 못 찾으면 iTunes 미리듣기로 대체됩니다.
+// YouTube Data API 검색은 1회 100 유닛(무료 하루 10,000 유닛 ≈ 100곡)이라 같은 곡은 캐시합니다.
+const YT_KEY = process.env.YOUTUBE_API_KEY || '';
+const ytCache = new Map();
+const validVideoId = v => typeof v === 'string' && /^[\w-]{11}$/.test(v);
+async function findVideo(title, artist) {
+  if (!YT_KEY || !title) return '';
+  const k = `${title}|${artist}`.toLowerCase();
+  if (ytCache.has(k)) return ytCache.get(k);
+  try {
+    const url = 'https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&videoEmbeddable=true'
+      + '&videoCategoryId=10&q=' + encodeURIComponent(`${artist} ${title} official audio`) + '&key=' + YT_KEY;
+    const j = await (await fetch(url)).json();
+    if (j.error) { console.error('YouTube API:', j.error.message); return ''; } // 할당량 초과 등 → 캐시하지 않고 대체 재생
+    const id = (j.items && j.items[0] && j.items[0].id.videoId) || '';
+    ytCache.set(k, id);
+    return id;
+  } catch { return ''; }
+}
+
+// 대기열에 들어가는 곡 정보 정리 (클라이언트가 보낸 값을 그대로 믿지 않음)
+const str = (v, n) => String(v == null ? '' : v).slice(0, n);
+const https = v => typeof v === 'string' && /^https:\/\//.test(v);
+function cleanTrack(t) {
+  if (!t || (!https(t.previewUrl) && !validVideoId(t.videoId))) return null;
+  return { id: str(t.id, 64) || crypto.randomUUID(), title: str(t.title, 200), artist: str(t.artist, 200),
+    previewUrl: https(t.previewUrl) ? str(t.previewUrl, 1000) : '', cover: https(t.cover) ? str(t.cover, 1000) : '',
+    videoId: validVideoId(t.videoId) ? t.videoId : '' };
+}
+
 // ---------- 가사 검색 ----------
 const MOCK = [
   { title: 'Let It Be', artist: 'The Beatles', lyrics: 'whisper words of wisdom let it be' },
@@ -126,16 +158,13 @@ function act(r, a) {
   switch (a.type) {
     case 'restore': { // 서버 재시작으로 비어 버린 방에만, 클라이언트가 저장해 둔 대기열을 복원 (일시정지 상태로)
       if (r.playlist.length || !Array.isArray(a.playlist)) break;
-      const str = (v, n) => String(v == null ? '' : v).slice(0, n);
-      r.playlist = a.playlist.slice(0, 200)
-        .filter(t => t && typeof t.previewUrl === 'string' && /^https:\/\//.test(t.previewUrl))
-        .map(t => ({ id: str(t.id, 64) || crypto.randomUUID(), title: str(t.title, 200), artist: str(t.artist, 200),
-          previewUrl: str(t.previewUrl, 1000), cover: /^https:\/\//.test(t.cover || '') ? str(t.cover, 1000) : '' }));
+      r.playlist = a.playlist.slice(0, 200).map(cleanTrack).filter(Boolean);
       r.index = r.playlist.length ? Math.min(Math.max(0, +a.index || 0), r.playlist.length - 1) : -1;
       setPos(r, 0, false);
       break;
     }
     case 'add':
+      if (!a.track) break;
       r.playlist.push(a.track);
       if (r.index === -1) select(r, 0);
       break;
@@ -196,7 +225,12 @@ http.createServer(async (req, res) => {
       if (req.method !== 'POST') return json(res, 405, {});
       let body = '';
       for await (const c of req) { body += c; if (body.length > 1e5) return json(res, 413, {}); }
-      act(r, JSON.parse(body));
+      const a = JSON.parse(body);
+      if (a.type === 'add') { // 담을 때 YouTube 영상을 찾아 붙여 둠 (도입부 재생용)
+        a.track = cleanTrack(a.track);
+        if (a.track && !a.track.videoId) a.track.videoId = await findVideo(a.track.title, a.track.artist);
+      }
+      act(r, a);
       broadcast(r);
       return json(res, 200, snapshot(r));
     }
@@ -209,4 +243,4 @@ http.createServer(async (req, res) => {
       res.end(d);
     });
   } catch (e) { json(res, 500, { error: String(e) }); }
-}).listen(PORT, () => console.log(`http://localhost:${PORT}  (가사 검색: ${MM_KEY ? 'Musixmatch' : 'mock 데이터 - MUSIXMATCH_KEY 미설정'})`));
+}).listen(PORT, () => console.log(`http://localhost:${PORT}  (가사 검색: ${MM_KEY ? 'Musixmatch' : 'mock 데이터 - MUSIXMATCH_KEY 미설정'}, 재생: ${YT_KEY ? 'YouTube 도입부 30초' : 'iTunes 미리듣기 - YOUTUBE_API_KEY 미설정'})`));

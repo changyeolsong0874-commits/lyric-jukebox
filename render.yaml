@@ -9,3 +9,5 @@ services:
     envVars:
       - key: MUSIXMATCH_KEY
         sync: false   # Render 대시보드에서 직접 입력 (없으면 샘플 곡으로 동작)
+      - key: YOUTUBE_API_KEY
+        sync: false   # YouTube Data API v3 키 (있으면 곡 도입부 30초 재생, 없으면 iTunes 미리듣기)
