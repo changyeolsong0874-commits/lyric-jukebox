@@ -156,7 +156,7 @@
     <section class="hero">
       <h2>어떤 <span>가사</span>가 떠오르나요?</h2>
       <form id="sf">
-        <input id="q" placeholder="예) hello from the other side" autocomplete="off">
+        <input id="q" placeholder="가사, 곡 제목, 가수 — 예) 봄날, shape of you" autocomplete="off">
         <button>검색</button>
       </form>
     </section>
@@ -223,10 +223,10 @@ $('copy').onclick = () => {
 $('sf').onsubmit = async e => {
   e.preventDefault();
   const q = $('q').value.trim(); if (!q) return;
-  $('results').innerHTML = '<div class="empty">🔎 가사를 찾는 중...</div>';
+  $('results').innerHTML = '<div class="empty">🔎 곡을 찾는 중...</div>';
   let list = [];
   try { list = await (await fetch('/api/search?q=' + encodeURIComponent(q))).json(); } catch {}
-  $('results').innerHTML = list.length ? '<h3>검색 결과</h3>' : '<div class="empty">일치하는 곡을 찾지 못했어요.<br>가사를 조금 다르게 입력해 보세요.</div>';
+  $('results').innerHTML = list.length ? '<h3>검색 결과</h3>' : '<div class="empty">일치하는 곡을 찾지 못했어요.<br>곡 제목이나 가수 이름으로도 검색해 보세요.</div>';
   list.forEach(t => {
     const d = document.createElement('div'); d.className = 'row';
     d.innerHTML = `<img src="${esc(t.cover)}" alt=""><div class="t"><b>${esc(t.title)}</b><span>${esc(t.artist)}</span></div><button>+ 담기</button>`;

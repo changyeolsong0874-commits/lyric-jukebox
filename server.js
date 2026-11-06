@@ -28,6 +28,29 @@ async function itunesPreview(title, artist) {
   return { previewUrl: t.previewUrl, cover: (t.artworkUrl100 || '').replace('100x100', '200x200') };
 }
 
+// 곡 제목/가수로 바로 검색 (키 불필요, 30초 미리듣기 있는 곡만)
+async function itunesSearch(q, limit = 10) {
+  const url = `https://itunes.apple.com/search?media=music&entity=song&limit=${limit}&term=` + encodeURIComponent(q);
+  const j = await (await fetch(url)).json();
+  return (j.results || []).filter(t => t.previewUrl).map(t => ({
+    id: crypto.randomUUID(), title: t.trackName, artist: t.artistName,
+    previewUrl: t.previewUrl, cover: (t.artworkUrl100 || '').replace('100x100', '200x200'),
+  }));
+}
+
+// 가사 검색 결과를 먼저, 그 뒤에 제목/가수 검색 결과를 붙이고 중복 제거
+async function search(q) {
+  const [byLyrics, byTitle] = await Promise.all([
+    searchLyrics(q).catch(() => []),
+    itunesSearch(q).catch(() => []),
+  ]);
+  const seen = new Set();
+  return [...byLyrics, ...byTitle].filter(t => {
+    const k = (t.title + '|' + t.artist).toLowerCase();
+    return seen.has(k) ? false : seen.add(k);
+  }).slice(0, 12);
+}
+
 async function searchLyrics(q) {
   let cands = [];
   if (MM_KEY) {
@@ -106,7 +129,7 @@ http.createServer(async (req, res) => {
   try {
     if (u.pathname === '/api/search') {
       const q = (u.searchParams.get('q') || '').trim();
-      return json(res, 200, q ? await searchLyrics(q) : []);
+      return json(res, 200, q ? await search(q) : []);
     }
     const m = u.pathname.match(/^\/api\/room\/([\w-]{1,32})\/(events|act|state)$/);
     if (m) {
