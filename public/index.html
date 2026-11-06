@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0e0b1a">
 <title>가사 주크박스</title>
 <style>
@@ -18,7 +18,7 @@
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html { color-scheme:dark light; }
   body {
-    margin:0; min-height:100vh; color:var(--fg);
+    margin:0; min-height:100vh; min-height:100dvh; color:var(--fg);
     font:16px/1.5 -apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
     background:
       radial-gradient(900px 500px at 85% -10%, color-mix(in srgb,var(--b) 35%,transparent), transparent 60%),
@@ -26,7 +26,8 @@
       var(--bg);
     background-attachment:fixed;
   }
-  main { max-width:760px; margin:0 auto; padding:20px 16px 220px; }
+  /* 아래 여백(--pb)은 하단 재생기 높이에 맞춰 스크립트가 자동으로 정합니다 */
+  main { max-width:760px; margin:0 auto; padding:20px max(16px, env(safe-area-inset-left)) var(--pb, 40px); }
   .hide { display:none !important; }
   small, .mut { color:var(--mut); }
 
@@ -62,10 +63,19 @@
   .record::before { content:""; position:absolute; inset:71px; border-radius:50%; background:var(--bg); z-index:1; }
   @keyframes spin { to { transform:rotate(360deg); } }
 
+  /* 대기실: 최근 방 */
+  .recent { width:100%; max-width:420px; text-align:left; margin-top:6px; }
+  .recent h3 { margin:10px 4px 6px; }
+  .recent .row { background:var(--card); border-color:var(--line); margin-bottom:8px; cursor:pointer; }
+  .recent .row .t b { font-family:ui-monospace,Consolas,monospace; letter-spacing:.02em; }
+  .recent .live { color:#3ddc97; font-weight:700; }
+
   /* 앱 상단 */
-  .top { display:flex; align-items:center; gap:10px; margin-bottom:22px; }
+  .top { display:flex; align-items:center; gap:8px; margin-bottom:22px; }
   .top .sp { flex:1; }
-  .pill { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:13px; color:var(--mut); }
+  .top button { padding:9px 14px; white-space:nowrap; }
+  .pill { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:6px 12px; font-size:13px; color:var(--mut);
+    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pill b { color:var(--fg); }
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#3ddc97; margin-right:6px; box-shadow:0 0 8px #3ddc97; }
 
@@ -74,7 +84,8 @@
   .hero h2 { font-size:clamp(22px,5vw,30px); letter-spacing:-.03em; margin:0 0 12px; font-weight:800; }
   .hero h2 span { background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
   #sf { display:flex; gap:8px; }
-  #sf input { padding:15px 20px; font-size:17px; }
+  #sf input { padding:15px 20px; font-size:17px; min-width:0; }
+  #sf button { white-space:nowrap; flex:none; }
 
   /* 섹션 */
   h3 { display:flex; align-items:center; gap:8px; font-size:13px; letter-spacing:.08em; text-transform:uppercase; color:var(--mut); margin:26px 4px 8px; font-weight:700; }
@@ -109,7 +120,10 @@
   .player { position:fixed; left:0; right:0; bottom:0; padding:12px 16px calc(14px + env(safe-area-inset-bottom));
     background:color-mix(in srgb,var(--bg2) 82%,transparent); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
     border-top:1px solid var(--line); }
-  .pin { max-width:760px; margin:0 auto; }
+  /* 곡 정보와 버튼은 한 줄, 진행바는 그 아래 */
+  .pin { max-width:760px; margin:0 auto; display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:14px; align-items:center;
+    grid-template-areas:"now ctl" "bar bar" "note note"; }
+  #now { grid-area:now; min-width:0; } .ctl { grid-area:ctl; } .bar { grid-area:bar; } .note { grid-area:note; }
   #now { display:flex; gap:14px; align-items:center; padding:0; }
   .disc { width:64px; height:64px; border-radius:50%; flex:none; position:relative; background:#15121f center/cover;
     box-shadow:0 8px 24px #0006, 0 0 0 2px var(--line); animation:spin 7s linear infinite; animation-play-state:paused; }
@@ -128,7 +142,28 @@
   .ctl #pp { width:58px; height:58px; font-size:22px; box-shadow:0 8px 24px color-mix(in srgb,var(--a) 45%,transparent); }
   .note { text-align:center; font-size:12px; color:var(--mut); margin-top:6px; }
 
-  @media (max-width:480px) { .joinbox { flex-direction:column; } #sf button { padding:11px 16px; } .disc { width:54px; height:54px; } .disc::after { inset:20px; } }
+  /* 모바일 */
+  @media (max-width:560px) {
+    main { padding-top:14px; }
+    #join { min-height:auto; padding-top:6vh; gap:14px; }
+    .record { width:110px; height:110px; } .record::after { inset:36px; } .record::before { inset:51px; }
+    .joinbox { flex-direction:column; }
+    .top { margin-bottom:16px; }
+    .top .lbl, .logo span { display:none; }          /* 상단 버튼은 아이콘만 */
+    .top button { width:42px; height:42px; padding:0; display:grid; place-items:center; font-size:18px; }
+    .hero h2 { margin-bottom:10px; }
+    #sf input { padding:13px 16px; font-size:16px; }  /* 16px 미만이면 iOS가 확대해 버림 */
+    #sf button { padding:11px 16px; white-space:nowrap; }
+    .row { padding:8px 4px; gap:10px; } .row img { width:46px; height:46px; }
+    .row button.x { min-width:40px; min-height:40px; }
+    .player { padding:10px 14px calc(10px + env(safe-area-inset-bottom)); }
+    .disc { width:46px; height:46px; } .disc::after { inset:17px; }
+    #now { gap:10px; } #now .t b { font-size:15px; } #now .t span { font-size:13px; }
+    .ctl { gap:6px; } .ctl button { width:40px; height:40px; font-size:16px; } .ctl #pp { width:48px; height:48px; font-size:19px; }
+    .bar { margin:8px 0 0; }
+    .note { display:none; }
+  }
+  @media (hover:none) { .row:hover { background:transparent; } .recent .row:hover { background:var(--card); } }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation:none !important; } }
 </style>
 </head>
@@ -143,14 +178,19 @@
       <button id="enter">입장</button>
     </div>
     <button class="ghost" id="newRoom">🎲 새 방 만들기</button>
+    <div class="recent hide" id="recent">
+      <h3>최근 방</h3>
+      <div id="recentList"></div>
+    </div>
   </div>
 
   <div id="app" class="hide">
     <div class="top">
-      <div class="logo"><i></i>주크박스</div>
+      <button class="ghost" id="leave" aria-label="대기실로 나가기"><span class="ico">←</span><span class="lbl"> 대기실</span></button>
+      <div class="logo"><i></i><span>주크박스</span></div>
       <div class="sp"></div>
       <span class="pill"><span class="dot"></span><b id="roomInfo"></b></span>
-      <button class="ghost" id="copy">🔗 초대 링크</button>
+      <button class="ghost" id="copy" aria-label="초대 링크 복사"><span class="ico">🔗</span><span class="lbl"> 초대 링크</span></button>
     </div>
 
     <section class="hero">
@@ -190,39 +230,117 @@ let room, state = null, offset = 0, seeking = false;
 const cid = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)).replace(/[^\w-]/g, '');
 const audio = $('audio');
 
-const roomFromUrl = new URLSearchParams(location.search).get('room');
+const cleanCode = s => String(s || '').trim().replace(/[^\w-]/g, '').slice(0, 32);
+const urlRoom = () => cleanCode(new URLSearchParams(location.search).get('room'));
+const roomFromUrl = urlRoom();
 if (roomFromUrl) $('room').value = roomFromUrl;
+
+// ---------- 최근 방 (이 브라우저에만 저장) ----------
+const RECENT_KEY = 'jukebox.recent';
+function getRecent() { try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch { return []; } }
+function setRecent(list) { try { localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 8))); } catch {} }
+const remember = code => setRecent([code, ...getRecent().filter(c => c !== code)]);
+const forget = code => { setRecent(getRecent().filter(c => c !== code)); renderRecent(); };
+
+let lobbyTimer = null;
+function renderRecent(delay = 0) {
+  const codes = getRecent();
+  $('recent').classList.toggle('hide', !codes.length);
+  $('recentList').innerHTML = '';
+  codes.forEach(code => {
+    const d = document.createElement('div'); d.className = 'row'; d.dataset.code = code;
+    d.innerHTML = `<div class="t"><b>${esc(code)}</b><span class="info">확인 중…</span></div><button>입장</button><button class="x" aria-label="목록에서 지우기">✕</button>`;
+    d.onclick = () => enterRoom(code);
+    d.querySelector('.x').onclick = e => { e.stopPropagation(); forget(code); };
+    $('recentList').appendChild(d);
+  });
+  setTimeout(refreshRecent, delay);
+}
+// 각 방의 접속 인원과 재생 중인 곡 (cid 없이 조회하므로 엿보기만 하고 인원에는 안 잡힘)
+function refreshRecent() {
+  document.querySelectorAll('#recentList .row').forEach(d => {
+    fetch(`/api/room/${d.dataset.code}/state`).then(r => r.json()).then(s => {
+      const cur = s.playlist[s.index];
+      const what = cur ? `${s.playing ? '♪' : '⏸'} ${cur.title}` : s.playlist.length ? `${s.playlist.length}곡 대기 중` : '비어 있음';
+      d.querySelector('.info').innerHTML = `${s.users ? `<span class="live">● ${s.users}명</span>` : '0명'} · ${esc(what)}`;
+    }).catch(() => { d.querySelector('.info').textContent = '연결할 수 없어요'; });
+  });
+}
+
+// ---------- 방 들어가기 / 나가기 ----------
+let gen = 0, es = null, poll = null; // gen: 방을 옮긴 뒤 늦게 도착한 이전 방 응답을 무시하기 위한 번호
+
+function enterRoom(code, fromHistory = false) {
+  code = cleanCode(code) || 'lobby';
+  if (room === code) return;
+  leaveRoom();
+  room = code; const g = ++gen;
+  if (!fromHistory && urlRoom() !== code) history.pushState(null, '', '?room=' + code);
+  remember(code);
+  clearInterval(lobbyTimer);
+  $('q').value = ''; $('results').innerHTML = ''; $('list').innerHTML = ''; $('cnt').textContent = '0';
+  $('roomInfo').textContent = `${code} · 연결 중…`;
+  $('join').classList.add('hide'); $('app').classList.remove('hide'); $('playerWrap').classList.remove('hide');
+  scrollTo(0, 0);
+  // 클릭 이후이므로 브라우저 자동재생 제한 해제
+  audio.play().catch(() => {});
+  es = new EventSource(`/api/room/${code}/events?cid=${cid}`);
+  es.onmessage = e => g === gen && apply(JSON.parse(e.data));
+  // SSE가 프록시/터널에서 막혀도 동작하도록 2초마다 상태를 확인 (접속 중이라는 신호도 겸함)
+  poll = setInterval(() => fetch(`/api/room/${code}/state?cid=${cid}`).then(r => r.json()).then(s => g === gen && apply(s)).catch(() => {}), 2000);
+}
+
+function leaveRoom() {
+  if (!room) return;
+  navigator.sendBeacon(`/api/room/${room}/leave?cid=${cid}`); // 바로 인원에서 빠지도록
+  if (es) es.close(); clearInterval(poll); es = poll = null;
+  gen++; room = null; state = null; loadedId = null;
+  audio.pause(); audio.removeAttribute('src'); audio.load();
+  document.body.classList.remove('playing');
+}
+
+function showLobby(push = true) {
+  leaveRoom();
+  if (push && location.search) history.pushState(null, '', location.pathname);
+  $('app').classList.add('hide'); $('playerWrap').classList.add('hide'); $('join').classList.remove('hide');
+  $('room').value = '';
+  renderRecent(600); // 방금 나간 나 자신이 인원에서 빠진 뒤에 조회
+  clearInterval(lobbyTimer); lobbyTimer = setInterval(refreshRecent, 5000);
+}
+
+// 브라우저/휴대폰 뒤로가기: 방 ↔ 대기실
+addEventListener('popstate', () => { const r = urlRoom(); if (r) enterRoom(r, true); else showLobby(false); });
+// 탭을 닫거나 다른 사이트로 이동하면 바로 인원에서 빠지도록 알림
+addEventListener('pagehide', () => { if (room) navigator.sendBeacon(`/api/room/${room}/leave?cid=${cid}`); });
 
 // 추측하기 어려운 랜덤 방 코드 (헷갈리는 문자 제외, 10자)
 $('newRoom').onclick = () => {
   const cs = 'abcdefghjkmnpqrstuvwxyz23456789', b = crypto.getRandomValues(new Uint8Array(10));
-  $('room').value = Array.from(b, x => cs[x % cs.length]).join('');
-  $('enter').click();
+  enterRoom(Array.from(b, x => cs[x % cs.length]).join(''));
 };
-
-$('enter').onclick = () => {
-  room = $('room').value.trim().replace(/[^\w-]/g, '') || 'lobby';
-  history.replaceState(null, '', '?room=' + room);
-  $('join').classList.add('hide'); $('app').classList.remove('hide'); $('playerWrap').classList.remove('hide');
-  // 클릭 이후이므로 브라우저 자동재생 제한 해제
-  audio.play().catch(() => {});
-  const es = new EventSource(`/api/room/${room}/events?cid=${cid}`);
-  es.onmessage = e => apply(JSON.parse(e.data));
-  // SSE가 프록시/터널에서 막혀도 동작하도록 2초마다 상태를 확인 (접속 중이라는 신호도 겸함)
-  setInterval(() => fetch(`/api/room/${room}/state?cid=${cid}`).then(r => r.json()).then(apply).catch(() => {}), 2000);
-  // 탭을 닫거나 다른 페이지로 이동하면 바로 인원에서 빠지도록 알림
-  addEventListener('pagehide', () => navigator.sendBeacon(`/api/room/${room}/leave?cid=${cid}`));
-};
+$('enter').onclick = () => enterRoom($('room').value);
+$('leave').onclick = () => showLobby();
 function apply(s) { state = s; offset = s.serverNow - Date.now(); render(); }
 $('room').addEventListener('keydown', e => e.key === 'Enter' && $('enter').click());
 
-const send = a => fetch(`/api/room/${room}/act?cid=${cid}`, { method: 'POST', body: JSON.stringify(a) })
-  .then(r => r.json()).then(apply).catch(() => {}); // 응답 상태를 바로 반영
+const send = a => {
+  if (!room) return; const g = gen;
+  return fetch(`/api/room/${room}/act?cid=${cid}`, { method: 'POST', body: JSON.stringify(a) })
+    .then(r => r.json()).then(s => g === gen && apply(s)).catch(() => {}); // 응답 상태를 바로 반영
+};
 $('copy').onclick = () => {
   navigator.clipboard.writeText(location.href).then(() => {
-    $('copy').textContent = '✓ 복사됨'; setTimeout(() => $('copy').textContent = '🔗 초대 링크', 1600);
+    const ico = $('copy').querySelector('.ico'), lbl = $('copy').querySelector('.lbl');
+    ico.textContent = '✓'; lbl.textContent = ' 복사됨';
+    setTimeout(() => { ico.textContent = '🔗'; lbl.textContent = ' 초대 링크'; }, 1600);
   }).catch(() => {});
 };
+
+// 하단 재생기 높이만큼 본문 아래 여백을 줘서 검색창/목록을 가리지 않게
+new ResizeObserver(() => {
+  const h = $('playerWrap').classList.contains('hide') ? 0 : $('playerWrap').offsetHeight;
+  document.querySelector('main').style.setProperty('--pb', (h + 24) + 'px');
+}).observe($('playerWrap'));
 
 $('sf').onsubmit = async e => {
   e.preventDefault();
@@ -239,8 +357,9 @@ $('sf').onsubmit = async e => {
   });
 };
 
-let loadedId = null;
+var loadedId = null;
 function render() {
+  if (!state || !room) return;
   const s = state, cur = s.playlist[s.index];
   $('roomInfo').textContent = `${room} · ${s.users}명`;
   $('cnt').textContent = s.playlist.length;
@@ -270,14 +389,17 @@ function render() {
 }
 
 function paintSeek() { const v = +$('seek').value; $('seek').style.setProperty('--p', (v / 300) + '%'); $('tcur').textContent = fmt(v / 1000); }
-audio.onended = () => { const c = state && state.playlist[state.index]; if (c) send({ type: 'ended', id: c.id }); };
+audio.onended = () => { const c = state && state.playlist[state.index]; if (c && room) send({ type: 'ended', id: c.id }); };
 audio.ontimeupdate = () => { if (!seeking) { $('seek').value = audio.currentTime * 1000; paintSeek(); } };
 $('seek').oninput = () => { seeking = true; paintSeek(); };
 $('seek').onchange = e => { seeking = false; send({ type: 'seek', pos: +e.target.value }); };
-$('pp').onclick = () => send({ type: state.playing ? 'pause' : 'play' });
+$('pp').onclick = () => state && send({ type: state.playing ? 'pause' : 'play' });
 $('next').onclick = () => send({ type: 'next' });
 $('prev').onclick = () => send({ type: 'prev' });
 
+// 처음 열었을 때: 대기실 + 최근 방 표시. 초대 링크(?room=)로 왔으면 코드가 미리 채워져 있음
+renderRecent();
+lobbyTimer = setInterval(refreshRecent, 5000);
 if (roomFromUrl) $('room').focus();
 </script>
 </body>
