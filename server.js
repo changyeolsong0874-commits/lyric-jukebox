@@ -76,12 +76,38 @@ async function searchLyrics(q) {
 // ---------- 방 상태 ----------
 const rooms = new Map();
 function getRoom(id) {
-  if (!rooms.has(id)) rooms.set(id, { playlist: [], index: -1, playing: false, pos: 0, ref: Date.now(), clients: new Set() });
+  if (!rooms.has(id)) rooms.set(id, { playlist: [], index: -1, playing: false, pos: 0, ref: Date.now(), clients: new Set(), seen: new Map(), lastUsers: 0 });
   return rooms.get(id);
 }
 const curPos = r => r.playing ? r.pos + (Date.now() - r.ref) : r.pos;
+
+// ---------- 실시간 접속 인원 ----------
+// 브라우저 탭마다 고유 cid를 보내고, (SSE 연결이 열려 있거나) 최근 PRESENCE_MS 안에 요청을 보낸 cid만 셉니다.
+// 같은 탭의 재연결은 한 명으로, 창을 닫은 사람은 몇 초 안에 빠집니다.
+const PRESENCE_MS = 7000;
+const validCid = c => typeof c === 'string' && /^[\w-]{8,64}$/.test(c);
+function touch(r, cid) { if (validCid(cid)) r.seen.set(cid, Date.now()); }
+function userCount(r) {
+  const now = Date.now(), ids = new Set();
+  for (const res of r.clients) if (res.cid) ids.add(res.cid);
+  for (const [cid, t] of r.seen) {
+    if (now - t <= PRESENCE_MS) ids.add(cid); else r.seen.delete(cid);
+  }
+  return ids.size;
+}
+// 인원이 바뀌면 바로 알려주기 (나간 사람 정리 포함)
+setInterval(() => {
+  for (const [id, r] of rooms) {
+    const n = userCount(r);
+    if (n !== r.lastUsers) broadcast(r);
+    if (n === 0 && !r.playlist.length && !r.clients.size) rooms.delete(id); // 빈 방 정리
+  }
+}, 2000);
+
 function snapshot(r) {
-  return { playlist: r.playlist, index: r.index, playing: r.playing, pos: curPos(r), serverNow: Date.now(), users: r.clients.size };
+  const users = userCount(r);
+  r.lastUsers = users;
+  return { playlist: r.playlist, index: r.index, playing: r.playing, pos: curPos(r), serverNow: Date.now(), users };
 }
 function broadcast(r) {
   const data = `data: ${JSON.stringify(snapshot(r))}\n\n`;
@@ -131,17 +157,25 @@ http.createServer(async (req, res) => {
       const q = (u.searchParams.get('q') || '').trim();
       return json(res, 200, q ? await search(q) : []);
     }
-    const m = u.pathname.match(/^\/api\/room\/([\w-]{1,32})\/(events|act|state)$/);
+    const m = u.pathname.match(/^\/api\/room\/([\w-]{1,32})\/(events|act|state|leave)$/);
     if (m) {
       const r = getRoom(m[1]);
+      const cid = u.searchParams.get('cid');
+      if (m[2] === 'leave') { // 탭을 닫을 때 sendBeacon으로 호출 → 즉시 인원에서 제외
+        if (validCid(cid)) { r.seen.delete(cid); for (const c of r.clients) if (c.cid === cid) r.clients.delete(c); }
+        broadcast(r);
+        res.writeHead(204); return res.end();
+      }
+      touch(r, cid);
       if (m[2] === 'state') return json(res, 200, snapshot(r));
       if (m[2] === 'events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no' });
+        if (validCid(cid)) res.cid = cid;
         r.clients.add(res);
         res.write(': ' + ' '.repeat(2048) + '\n\n'); // 프록시 버퍼를 밀어내기 위한 패딩
         res.write(`data: ${JSON.stringify(snapshot(r))}\n\n`);
         const ka = setInterval(() => res.write(': ka\n\n'), 20000);
-        req.on('close', () => { clearInterval(ka); r.clients.delete(res); broadcast(r); });
+        req.on('close', () => { clearInterval(ka); r.clients.delete(res); r.seen.delete(res.cid); broadcast(r); });
         broadcast(r);
         return;
       }

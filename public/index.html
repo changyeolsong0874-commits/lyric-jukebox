@@ -186,6 +186,8 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 let room, state = null, offset = 0, seeking = false;
+// 이 탭의 고유 ID — 서버가 실시간 접속 인원을 셀 때 사용
+const cid = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)).replace(/[^\w-]/g, '');
 const audio = $('audio');
 
 const roomFromUrl = new URLSearchParams(location.search).get('room');
@@ -204,15 +206,17 @@ $('enter').onclick = () => {
   $('join').classList.add('hide'); $('app').classList.remove('hide'); $('playerWrap').classList.remove('hide');
   // 클릭 이후이므로 브라우저 자동재생 제한 해제
   audio.play().catch(() => {});
-  const es = new EventSource(`/api/room/${room}/events`);
+  const es = new EventSource(`/api/room/${room}/events?cid=${cid}`);
   es.onmessage = e => apply(JSON.parse(e.data));
-  // SSE가 프록시/터널에서 막혀도 동작하도록 2초마다 상태를 확인
-  setInterval(() => fetch(`/api/room/${room}/state`).then(r => r.json()).then(apply).catch(() => {}), 2000);
+  // SSE가 프록시/터널에서 막혀도 동작하도록 2초마다 상태를 확인 (접속 중이라는 신호도 겸함)
+  setInterval(() => fetch(`/api/room/${room}/state?cid=${cid}`).then(r => r.json()).then(apply).catch(() => {}), 2000);
+  // 탭을 닫거나 다른 페이지로 이동하면 바로 인원에서 빠지도록 알림
+  addEventListener('pagehide', () => navigator.sendBeacon(`/api/room/${room}/leave?cid=${cid}`));
 };
 function apply(s) { state = s; offset = s.serverNow - Date.now(); render(); }
 $('room').addEventListener('keydown', e => e.key === 'Enter' && $('enter').click());
 
-const send = a => fetch(`/api/room/${room}/act`, { method: 'POST', body: JSON.stringify(a) })
+const send = a => fetch(`/api/room/${room}/act?cid=${cid}`, { method: 'POST', body: JSON.stringify(a) })
   .then(r => r.json()).then(apply).catch(() => {}); // 응답 상태를 바로 반영
 $('copy').onclick = () => {
   navigator.clipboard.writeText(location.href).then(() => {
