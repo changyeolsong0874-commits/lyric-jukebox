@@ -74,11 +74,21 @@ async function searchLyrics(q) {
 }
 
 // ---------- 방 상태 ----------
+// 방 코드(입장·초대용, 서버가 랜덤 생성)와 방 제목(화면 표시용, 누구나 수정 가능)을 따로 관리합니다.
+// 방은 POST /api/rooms 로만 만들어지고, 없는 코드로 접근하면 404를 돌려줍니다.
 const rooms = new Map();
-function getRoom(id) {
-  if (!rooms.has(id)) rooms.set(id, { playlist: [], index: -1, playing: false, pos: 0, ref: Date.now(), clients: new Set(), seen: new Map(), lastUsers: 0 });
-  return rooms.get(id);
+const MAX_ROOMS = 500;
+const CODE_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789'; // 헷갈리는 문자(0/o, 1/l/i) 제외
+const cleanTitle = t => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 40) || '새 방';
+function createRoom(title) {
+  let code;
+  do { code = Array.from({ length: 10 }, () => CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]).join(''); } while (rooms.has(code));
+  const r = { code, title: cleanTitle(title), createdAt: Date.now(), emptySince: Date.now(),
+    playlist: [], index: -1, playing: false, pos: 0, ref: Date.now(), clients: new Set(), seen: new Map(), lastUsers: 0 };
+  rooms.set(code, r);
+  return r;
 }
+const getRoom = id => rooms.get(id);
 const curPos = r => r.playing ? r.pos + (Date.now() - r.ref) : r.pos;
 
 // ---------- 실시간 접속 인원 ----------
@@ -95,19 +105,27 @@ function userCount(r) {
   }
   return ids.size;
 }
-// 인원이 바뀌면 바로 알려주기 (나간 사람 정리 포함)
+// 인원이 바뀌면 바로 알려주고, 0명인 상태가 EMPTY_GRACE_MS 동안 이어진 방은 삭제
+// (새로고침·잠깐의 연결 끊김으로 방이 사라지지 않도록 약간의 여유를 둠)
+const EMPTY_GRACE_MS = 30000;
 setInterval(() => {
-  for (const [id, r] of rooms) {
+  const now = Date.now();
+  for (const [code, r] of rooms) {
     const n = userCount(r);
     if (n !== r.lastUsers) broadcast(r);
-    if (n === 0 && !r.playlist.length && !r.clients.size) rooms.delete(id); // 빈 방 정리
+    if (n > 0) { r.emptySince = null; continue; }
+    if (!r.emptySince) r.emptySince = now;
+    else if (now - r.emptySince >= EMPTY_GRACE_MS) {
+      for (const res of r.clients) res.end();
+      rooms.delete(code);
+    }
   }
 }, 2000);
 
 function snapshot(r) {
   const users = userCount(r);
   r.lastUsers = users;
-  return { playlist: r.playlist, index: r.index, playing: r.playing, pos: curPos(r), serverNow: Date.now(), users };
+  return { code: r.code, title: r.title, playlist: r.playlist, index: r.index, playing: r.playing, pos: curPos(r), serverNow: Date.now(), users };
 }
 function broadcast(r) {
   const data = `data: ${JSON.stringify(snapshot(r))}\n\n`;
@@ -121,6 +139,7 @@ function select(r, i) {
 
 function act(r, a) {
   switch (a.type) {
+    case 'rename': r.title = cleanTitle(a.title); break;
     case 'add':
       r.playlist.push(a.track);
       if (r.index === -1) select(r, 0);
@@ -148,7 +167,7 @@ function act(r, a) {
 }
 
 // ---------- HTTP ----------
-const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
 
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
@@ -157,15 +176,25 @@ http.createServer(async (req, res) => {
       const q = (u.searchParams.get('q') || '').trim();
       return json(res, 200, q ? await search(q) : []);
     }
+    if (u.pathname === '/api/rooms') { // 새 방 만들기: { title } → { code, title }
+      if (req.method !== 'POST') return json(res, 405, {});
+      if (rooms.size >= MAX_ROOMS) return json(res, 429, { error: 'too_many_rooms' });
+      let body = '';
+      for await (const c of req) { body += c; if (body.length > 1e4) return json(res, 413, {}); }
+      let title = '';
+      try { title = JSON.parse(body || '{}').title; } catch {}
+      const r = createRoom(title);
+      return json(res, 201, { code: r.code, title: r.title });
+    }
     const m = u.pathname.match(/^\/api\/room\/([\w-]{1,32})\/(events|act|state|leave)$/);
     if (m) {
       const r = getRoom(m[1]);
       const cid = u.searchParams.get('cid');
       if (m[2] === 'leave') { // 탭을 닫을 때 sendBeacon으로 호출 → 즉시 인원에서 제외
-        if (validCid(cid)) { r.seen.delete(cid); for (const c of r.clients) if (c.cid === cid) r.clients.delete(c); }
-        broadcast(r);
+        if (r && validCid(cid)) { r.seen.delete(cid); for (const c of r.clients) if (c.cid === cid) r.clients.delete(c); broadcast(r); }
         res.writeHead(204); return res.end();
       }
+      if (!r) return json(res, 404, { error: 'no_room' }); // 없는 방이거나 0명이 되어 지워진 방
       touch(r, cid);
       if (m[2] === 'state') return json(res, 200, snapshot(r));
       if (m[2] === 'events') {
